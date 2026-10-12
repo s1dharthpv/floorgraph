@@ -23,7 +23,7 @@ The one idea worth calling out: every write to the shop floor - a human clicking
 
 The webhook is plain HTTP today, not MQTT/OPC-UA - deliberately: it's the simplest thing that gets the governance model right end-to-end, and real PLC/gateway integration is better served by a small bridge that forwards into this same webhook than by baking a broker dependency into the app itself. Worth revisiting if a real deployment needs it.
 
-71 tests, full suite green, CI passing against Frappe/ERPNext v15 and v16 (a real two-leg matrix, not a single pinned version).
+72 tests, full suite green, CI passing against Frappe/ERPNext v15 and v16 (a real two-leg matrix, not a single pinned version).
 
 ### Screenshots
 

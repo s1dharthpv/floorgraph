@@ -140,9 +140,10 @@
    "read_only": 1
   },
   {
+   "description": "Units started but never completed (the Job Card's process loss), counted on the day of its last time log.",
    "fieldname": "scrap_qty",
    "fieldtype": "Float",
-   "label": "Scrap Qty",
+   "label": "Process Loss Qty",
    "read_only": 1
   },
   {
@@ -150,6 +151,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "Good Qty / (Actual Qty + Process Loss Qty). Same definition on ERPNext v15 and v16.",
    "fieldname": "quality",
    "fieldtype": "Percent",
    "in_list_view": 1,
@@ -172,7 +174,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-21 16:00:11.170054",
+ "modified": "2026-10-12 19:20:00.000000",
  "modified_by": "Administrator",
  "module": "Floorgraph",
  "name": "Workstation OEE Log",

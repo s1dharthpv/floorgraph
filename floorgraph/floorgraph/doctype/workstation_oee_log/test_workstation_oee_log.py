@@ -173,10 +173,15 @@ class TestWorkstationOEELog(FloorgraphTestCase):
 		self.assertEqual(data["availability"], 0)
 
 	def test_scrap_qty_not_lost_when_job_cards_last_time_log_is_zero_qty(self):
-		if frappe.get_meta("Job Card").has_field("scrap_items"):
-			self._assert_scrap_not_lost_v15()
-		else:
-			self._assert_scrap_not_lost_v16()
+		workstation, job_card, _ideal = _make_production_scenario(wo_qty=20, completed_qty=15)
+		log_date = getdate()
+		self._append_trailing_idle_time_log(job_card, log_date)
+
+		self.assertEqual(frappe.db.get_value("Job Card", job_card, "process_loss_qty"), 5)
+
+		data = compute_workstation_oee(workstation, log_date)
+		self.assertEqual(data["scrap_qty"], 5)
+		self.assertEqual(data["good_qty"], 15)
 
 	def _append_trailing_idle_time_log(self, job_card, log_date):
 		# A zero-qty idle/travel entry dated AFTER log_date - before the fix,
@@ -195,85 +200,22 @@ class TestWorkstationOEELog(FloorgraphTestCase):
 		)
 		jc.save(ignore_permissions=True)
 
-	def _assert_scrap_not_lost_v15(self):
-		workstation, job_card, _ideal = _make_production_scenario(wo_qty=20, completed_qty=20)
-		log_date = getdate()
-
-		jc = frappe.get_doc("Job Card", job_card)
-		jc.append(
-			"scrap_items",
-			{"item_code": jc.production_item, "stock_qty": 5, "stock_uom": "Nos"},
-		)
-		jc.save(ignore_permissions=True)
-		self._append_trailing_idle_time_log(job_card, log_date)
-
-		data = compute_workstation_oee(workstation, log_date)
-		self.assertEqual(data["scrap_qty"], 5)
-		self.assertEqual(data["good_qty"], 15)
-
-	def _assert_scrap_not_lost_v16(self):
-		workstation, job_card, _ideal = _make_production_scenario(wo_qty=20, completed_qty=15)
-		log_date = getdate()
-		self._append_trailing_idle_time_log(job_card, log_date)
-
-		self.assertEqual(frappe.db.get_value("Job Card", job_card, "process_loss_qty"), 5)
-
-		data = compute_workstation_oee(workstation, log_date)
-		self.assertEqual(data["scrap_qty"], 5)
-		self.assertEqual(data["good_qty"], 15)
-
 	def test_performance_and_quality_from_job_card_activity(self):
-		# ERPNext v15 tracks scrap as an explicit child table on Job Card
-		# (units completed, then flagged defective). v16 replaced it with a
-		# computed process_loss_qty field (units never completed - yield
-		# loss, not a post-completion defect). See floorgraph.oee.engine's
-		# module docstring - each branch below asserts its own numbers
-		# rather than forcing a match between the two schemas.
-		if frappe.get_meta("Job Card").has_field("scrap_items"):
-			self._assert_quality_v15_scrap_items()
-		else:
-			self._assert_quality_v16_process_loss()
-
-	def _assert_quality_v15_scrap_items(self):
-		# 1 unit ideal cycle time = 10 min. Work order qty=20, one time log
-		# completes all 20 units. Planned=480, no downtime -> run=480.
-		# Ideal run = 10 * 20 = 200 min. Performance = 200/480 = 41.67%.
-		workstation, job_card, ideal_cycle_time = _make_production_scenario(wo_qty=20, completed_qty=20)
-		log_date = getdate()
-
-		# Scrap 5 of the 20 completed units, dated (via last time log) to
-		# today so it's attributed to this log_date.
-		jc = frappe.get_doc("Job Card", job_card)
-		jc.append(
-			"scrap_items",
-			{"item_code": jc.production_item, "stock_qty": 5, "stock_uom": "Nos"},
-		)
-		jc.save(ignore_permissions=True)
-
-		data = compute_workstation_oee(workstation, log_date)
-
-		self.assertEqual(data["actual_qty"], 20)
-		self.assertAlmostEqual(data["ideal_run_minutes"], ideal_cycle_time * 20, places=2)
-		self.assertAlmostEqual(data["performance"], (ideal_cycle_time * 20) / 480 * 100, places=2)
-		self.assertEqual(data["scrap_qty"], 5)
-		self.assertEqual(data["good_qty"], 15)
-		self.assertAlmostEqual(data["quality"], 75.0, places=2)
-
-	def _assert_quality_v16_process_loss(self):
-		# Work order qty=20, but the time log only completes 15 - the other
-		# 5 are a process loss (never completed), computed automatically by
-		# Job Card.before_save() as for_quantity - total_completed_qty -
-		# pending_qty (0 here, since this job card is never explicitly
-		# marked "pending" via the Complete Job Card flow). Planned=480, no
-		# downtime -> run=480. Ideal run = 10 * 15 = 150 min (only completed
-		# units count toward performance). Performance = 150/480 = 31.25%.
+		# Same definition on ERPNext v15 and v16: quality comes from the Job
+		# Card's computed process_loss_qty (units never completed). Work order
+		# qty=20, but the time log only completes 15 - the other 5 are a
+		# process loss, derived automatically by the Job Card as
+		# for_quantity - total_completed_qty (- pending_qty on v16, 0 here).
+		# Planned=480, no downtime -> run=480. Ideal run = 10 * 15 = 150 min
+		# (only completed units count toward performance).
+		# Performance = 150/480 = 31.25%.
 		workstation, job_card, ideal_cycle_time = _make_production_scenario(wo_qty=20, completed_qty=15)
 		log_date = getdate()
 
 		self.assertEqual(
 			frappe.db.get_value("Job Card", job_card, "process_loss_qty"),
 			5,
-			"Job Card.before_save() should have derived a 5-unit process loss (20 - 15 - 0 pending).",
+			"Job Card should have derived a 5-unit process loss (20 - 15 - 0 pending).",
 		)
 
 		data = compute_workstation_oee(workstation, log_date)
@@ -284,6 +226,27 @@ class TestWorkstationOEELog(FloorgraphTestCase):
 		self.assertEqual(data["scrap_qty"], 5)
 		self.assertEqual(data["good_qty"], 15)
 		self.assertAlmostEqual(data["quality"], 75.0, places=2)
+
+	def test_v15_scrap_items_table_does_not_change_quality(self):
+		# ERPNext v15 still has Job Card.scrap_items; v16 removed it. Quality
+		# is defined the same way on both, from process_loss_qty only, so
+		# scrap item rows must not move the number.
+		if not frappe.get_meta("Job Card").has_field("scrap_items"):
+			self.skipTest("Job Card has no scrap_items table on this ERPNext version")
+
+		workstation, job_card, _ideal = _make_production_scenario(wo_qty=20, completed_qty=20)
+		log_date = getdate()
+		jc = frappe.get_doc("Job Card", job_card)
+		jc.append(
+			"scrap_items",
+			{"item_code": jc.production_item, "stock_qty": 5, "stock_uom": "Nos"},
+		)
+		jc.save(ignore_permissions=True)
+
+		data = compute_workstation_oee(workstation, log_date)
+		self.assertEqual(data["scrap_qty"], 0)
+		self.assertEqual(data["good_qty"], 20)
+		self.assertAlmostEqual(data["quality"], 100.0, places=2)
 
 	def test_upsert_creates_then_updates_single_row_per_workstation_per_day(self):
 		workstation, _job_card, _ideal = _make_production_scenario(wo_qty=1, completed_qty=0)

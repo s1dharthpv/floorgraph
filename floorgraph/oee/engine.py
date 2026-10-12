@@ -22,37 +22,36 @@ Performance = Ideal Run Minutes / Run Minutes
     by ERPNext, not invented for this calculation.
 
 Quality = Good Qty / Attempted Qty
-    Bridges two different ERPNext schemas, not just one:
+    Same definition on ERPNext v15 and v16, from the same signal: the Job
+    Card's computed `process_loss_qty` (for_quantity - total_completed_qty,
+    minus pending_qty on v16) - units that were NEVER completed, a
+    yield-loss concept. Those units are, by construction, absent from
+    Actual Qty (the Job Card Time Log completed_qty sum), so
+    Attempted Qty = Actual Qty + Process Loss Qty and Good Qty = Actual Qty.
 
-    - v15: Job Card has an explicit `scrap_items` child table (`Job Card
-      Scrap Item`) - units that WERE completed but flagged defective on
-      inspection. Attempted Qty == Actual Qty (everything scrapped was
-      still "completed"); Good Qty = Actual Qty - Scrap Qty.
-    - v16+: ERPNext removed `scrap_items` from Job Card entirely, replacing
-      it with a single computed `process_loss_qty` field
-      (for_quantity - total_completed_qty - pending_qty) - units that were
-      NEVER completed at all, a yield-loss concept, not a post-completion
-      defect flag. Those units are, by construction, absent from Actual
-      Qty (the Job Card Time Log completed_qty sum), so Attempted Qty =
-      Actual Qty + Process Loss Qty, and Good Qty = Actual Qty as-is.
+    v15's `Job Card Scrap Item` table is deliberately NOT read. Its rows
+    are scrap items with their own item and UOM, not a count of defective
+    units of the product, so summing them against completed units assumed
+    a unit match that ERPNext does not guarantee. (v16 removed the table.)
+    Before this change v15 used it and v16 used process_loss_qty, so the
+    same shop-floor facts gave different Quality on the two versions.
 
-    Both reduce to the same intent - Quality = fraction of attempted
-    production that came out good - just from two structurally different
-    signals depending on which ERPNext schema is installed. See
-    `_job_card_scrap_qty` / `_job_card_process_loss_qty` for the schema
-    detection.
+    Caveat, unchanged from the earlier v16 behaviour: process_loss_qty is
+    computed on every save of a partly completed Job Card, so a card still
+    in progress (completed < for_quantity, nothing marked pending) counts
+    the remainder as loss until it is finished or the rest is marked
+    pending.
 
-    Job Card Scrap Item (v15) and process_loss_qty (v16+) both have no
-    per-day granularity of their own (they're snapshots on the Job Card,
-    not per-log-entry) - a job card's loss is attributed to the calendar
-    date of its LAST time log that actually has completed_qty > 0 (not
-    simply its last time log - a trailing zero-qty idle/travel entry must
-    not "steal" the attribution date, since that day never has the job
-    card in job_cards_seen and the loss would silently vanish rather than
-    just being misattributed). That's a documented approximation for jobs
-    spanning multiple days, not an exact daily slice. Loss qty and
-    completed qty may also carry different UOMs in principle; no
-    conversion is applied here.
+    Process loss has no per-day granularity of its own (it is a snapshot
+    on the Job Card, not per-log-entry) - a job card's loss is attributed to
+    the calendar date of its LAST time log that actually has
+    completed_qty > 0 (not simply its last time log - a trailing zero-qty
+    idle/travel entry must not "steal" the attribution date, since that day
+    never has the job card in job_cards_seen and the loss would silently
+    vanish rather than just being misattributed). That's a documented
+    approximation for jobs spanning multiple days, not an exact daily
+    slice. Loss qty and completed qty may also carry different UOMs in
+    principle; no conversion is applied here.
 
 OEE = Availability * Performance * Quality (all as 0-100 percentages,
 scaled back down once).
@@ -97,24 +96,15 @@ def compute_workstation_oee(workstation, log_date):
 
 	performance = (ideal_run_minutes / run_minutes * 100) if run_minutes else 0
 
-	if _job_card_has_scrap_items():
-		# v15 model: scrap is completed-but-defective, already inside actual_qty.
-		scrap_qty = sum(
-			_job_card_scrap_qty(job_card)
-			for job_card in job_cards_seen
-			if _last_time_log_date(job_card) == log_date
-		)
-		attempted_qty = actual_qty
-		good_qty = max(actual_qty - scrap_qty, 0)
-	else:
-		# v16+ model: process loss is never-completed, so it's outside actual_qty.
-		scrap_qty = sum(
-			_job_card_process_loss_qty(job_card)
-			for job_card in job_cards_seen
-			if _last_time_log_date(job_card) == log_date
-		)
-		attempted_qty = actual_qty + scrap_qty
-		good_qty = actual_qty
+	# One definition on every supported ERPNext version: process loss is
+	# units that were never completed, so it is outside actual_qty.
+	scrap_qty = sum(
+		_job_card_process_loss_qty(job_card)
+		for job_card in job_cards_seen
+		if _last_time_log_date(job_card) == log_date
+	)
+	attempted_qty = actual_qty + scrap_qty
+	good_qty = actual_qty
 	quality = (good_qty / attempted_qty * 100) if attempted_qty else 0
 
 	oee = availability * performance * quality / 10000
@@ -201,26 +191,6 @@ def _last_time_log_date(job_card):
 		order_by="to_time desc",
 	)
 	return getdate(last) if last else None
-
-
-def _job_card_has_scrap_items():
-	"""True on Frappe/ERPNext v15 (Job Card.scrap_items exists), False on v16+
-	(replaced by the computed process_loss_qty field). Cached on the module
-	so this schema check runs once, not once per job card."""
-	if not hasattr(_job_card_has_scrap_items, "_cache"):
-		_job_card_has_scrap_items._cache = frappe.get_meta("Job Card").has_field("scrap_items")
-	return _job_card_has_scrap_items._cache
-
-
-def _job_card_scrap_qty(job_card):
-	JobCardScrapItem = frappe.qb.DocType("Job Card Scrap Item")
-	total = (
-		frappe.qb.from_(JobCardScrapItem)
-		.select(Sum(JobCardScrapItem.stock_qty))
-		.where(JobCardScrapItem.parent == job_card)
-		.run()
-	)[0][0]
-	return flt(total)
 
 
 def _job_card_process_loss_qty(job_card):
