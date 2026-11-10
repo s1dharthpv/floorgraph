@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://github.com/s1dharthpv/floorgraph/blob/main/SECURITY.md
+    about: Please report security problems privately, not as a public issue.
+  - name: Support
+    url: https://github.com/s1dharthpv/floorgraph/blob/main/SUPPORT.md
+    about: Read this before asking a question.
