@@ -1,0 +1,24 @@
+name: Bug report
+description: Something in Floorgraph does not work as described
+labels: [bug]
+body:
+  - type: input
+    id: versions
+    attributes:
+      label: Frappe, ERPNext and Floorgraph versions
+      description: Output of `bench version`
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected and what happened instead
+      description: Include the error from the browser console or `bench` logs. Please do not paste real production data.
+    validations:
+      required: true
